@@ -1,9 +1,7 @@
-!pip install mne
-!pip install neurodsp
-
 import mne  
 import matplotlib.pyplot as plt
-from neurodsp.aperiodic import compute_fluctuations 
+import numpy as np
+import math
 
 raw = mne.io.read_raw_eeglab(r'LS_10_4.set',preload=True) #Program needs .set and .fdt files with same name
 
@@ -24,16 +22,119 @@ plt.xlabel("Time[s]")
 plt.ylabel("Amplitude [μV]")
 plt.show()
 
-# Compute DFA
-fs=500
-ts_wn, flucs_wn, exp_wn = compute_fluctuations(data[0,:], fs, n_scales=10, min_scale=0.01, max_scale=1.0)
+#MATLAB CODE 1
 
-_, ax = plt.subplots(figsize=(5, 5))
+RW=np.cumsum(data-np.mean(data))
 
-ax.loglog(ts_wn, flucs_wn)
+#MATLAB CODE 2
 
-ax.set(title="Fluctuations Across Window Sizes",
-       xlabel="Time Scales", ylabel="Fluctuations")
-plt.legend();
+RMS=math.sqrt((np.mean(data))**2)
 
-print("DFA exponent (α):\t {:1.3f}".format(exp_wn))
+#MATLAB CODE 3
+#This should closely match the paper...
+
+X=np.cumsum(data-np.mean(data))
+X=X.T
+scale=1024
+m=1
+
+segments=len(X)//scale #// is integer division
+fit=[]
+RMS=[]
+
+for i in range(segments):
+    Idx_start = i * scale #Adjust scale for valid Python indexing
+    Idx_stop = (i + 1) * scale
+    
+    Index = np.arange(Idx_start, Idx_stop)
+    X_Idx = X[Idx_start:Idx_stop]
+
+    C1=np.polyfit(Index, X_Idx, m)
+    
+    fit_segment = np.polyval(C1, Index)  # Compute fitted values
+    fit.append(fit_segment)
+    RMS.append(np.sqrt(np.mean((X_Idx - fit_segment) ** 2)))
+
+F=np.sqrt(np.mean(RMS)**2)
+
+#MATLAB CODE 5
+
+X=np.cumsum(data-np.mean(data))
+X=X.T
+scale=[16,32,64,128,256,512,1024]
+m=1
+
+fit=[]
+RMS=[]
+segments=[]
+F = np.zeros(len(scale))
+segment_RMS=[]
+
+for j in range(len(scale)):
+    segment=int(np.floor(len(X)/scale[j]))
+    segments.append(segment)
+
+    Index = np.empty((int(segment), scale[j]), dtype=int)
+    
+    for i in range(segment):
+        Idx_start = i * scale[j] #Adjust scale for valid Python indexing
+        Idx_stop = (i + 1) * scale[j]
+        
+        Index[i,:] = np.arange(Idx_start, Idx_stop)
+        X_Idx = X[Index[i,:]]
+
+        C1=np.polyfit(Index[i,:], X_Idx, m)
+    
+        fit_segment = np.polyval(C1, Index)  # Compute fitted values
+        #fit.append(fit_segment)
+        #RMS.append(np.sqrt(np.mean((X_Idx - fit_segment) ** 2)))
+
+        rms_value = np.sqrt(np.mean((X_Idx - fit_segment) ** 2))
+        segment_RMS.append(rms_value)
+
+    F[j] = np.sqrt(np.mean(np.array(segment_RMS) ** 2))
+
+X = np.cumsum(data - np.mean(data))
+X = X.T
+scale = [16, 32, 64, 128, 256, 512, 1024]
+m = 1
+
+F = np.zeros(len(scale))
+
+for j in range(len(scale)):
+    segment = int(np.floor(len(X) / scale[j]))
+    segment_RMS = []  # Reset RMS per scale
+
+    for i in range(segment):
+        Idx_start = i * scale[j]
+        Idx_stop = (i + 1) * scale[j]
+        X_Idx = X[Idx_start:Idx_stop]
+
+        # Fit a polynomial (or linear fit)
+        C1 = np.polyfit(np.arange(scale[j]), X_Idx, m)
+        fit_segment = np.polyval(C1, np.arange(scale[j]))
+
+        # Calculate RMS for the segment
+        rms_value = np.sqrt(np.mean((X_Idx - fit_segment) ** 2))
+        segment_RMS.append(rms_value)
+
+    F[j] = np.sqrt(np.mean(np.array(segment_RMS) ** 2))
+
+C2 = np.polyfit(np.log2(scale), np.log2(F), 1)
+H = C2[0]
+RegLine = np.polyval(C2, np.log2(scale))
+
+plt.plot(scale, 2 ** RegLine, label=f"Fitted Line (Slope = {H:.4f})", color="pink")
+plt.scatter(scale, F, color="pink", label="Original Data")
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xticks(scale, [str(s) for s in scale])
+
+plt.xlabel("Scale")
+plt.ylabel("F")
+plt.title("DFA Plot: Scale vs. F")
+plt.legend()
+plt.grid(True, which="both", linestyle="--")
+plt.show()
+
